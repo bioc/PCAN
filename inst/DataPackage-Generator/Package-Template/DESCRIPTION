@@ -1,0 +1,16 @@
+Package: MultiHumanPhenoDB
+Title: Integration of several human trait/disease/phenotype databases
+Version: 0.99.0
+Author: Patrice Godard
+Maintainer: Patrice Godard <patrice.godard@gmail.com>
+Description: Data package handling
+  - ClinVar (ftp://ftp.ncbi.nih.gov/pub/clinvar) 
+  - MedGen (ftp://ftp.ncbi.nih.gov/pub/medgen/)
+  - Human Phenotype Ontology (http://www.human-phenotype-ontology.org/)
+  - Orphanet (http://www.orphadata.org/cgi-bin/inc/product1.inc.php)
+  - Data are also prepared for semantic similarity analyses
+License: CC BY-NC-ND 4.0
+Depends: RSQLite
+Imports: png
+Suggests: PCA
+LazyData: true

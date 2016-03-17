@@ -1,0 +1,20 @@
+Package: PCAN
+Title: Phenotype Consensus ANalysis (PCAN)
+Version: 0.99.3
+Date: 2016-03-09
+Author: Matthew Page and Patrice Godard
+Maintainer: Matthew Page <matthew.page@ucb.com> and Patrice Godard
+        <patrice.godard@gmail.com>
+Description: Phenotypes comparison based on a pathway consensus
+        approach. Assess the relationship between candidate genes and a
+        set of phenotypes based on additional genes related to the
+        candidate (e.g. Pathways or network neighbors).
+biocViews: Annotation, Sequencing, Genetics, FunctionalPrediction,
+        VariantAnnotation, Pathways, Network
+License: CC BY-NC-ND 4.0
+Depends: R (>= 3.3), BiocParallel
+Imports: grDevices, stats
+Suggests: BiocStyle, knitr, rmarkdown, reactome.db, STRINGdb
+VignetteBuilder: knitr
+RoxygenNote: 5.0.1
+NeedsCompilation: no

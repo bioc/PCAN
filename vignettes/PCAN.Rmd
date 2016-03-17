@@ -1,0 +1,775 @@
+---
+title: "Assessing gene relevance for a set of phenotypes"
+author: "Patrice Godard and Matt Page"
+date: "`r format(Sys.time(), '%B %d %Y')`"
+package: "PCAN (version `r packageVersion('PCAN')`)"
+abstract: "This document explores different ways to assess the relevance
+of a gene for a set of human phenotypes using the PCAN package."
+bibliography: bibliography.bib
+vignette: >
+    %\VignetteIndexEntry{Assessing gene relevance for a set of phenotypes}
+    %\VignetteEngine{knitr::rmarkdown}
+    %\VignetteEncoding{UTF-8}
+output:
+    BiocStyle::html_document:
+        toc: true
+---
+
+# Introduction
+
+This document explores different ways to assess the relevance
+of a gene for a set of human phenotypes using the PCAN package.
+
+```{r}
+library(PCAN)
+## Some functions can be parallelized.
+## They use the bpmapply function from the BiocParallel library.
+## Follow instructions provided in the BiocParallel manual to
+## configure your parallelization backend.
+## options(MulticoreParam=quote(MulticoreParam(workers=4)))
+```
+
+## Use case
+
+This document demonstrates the capabilities of the PCAN package through the
+analysis of the following example.
+
+```{r, echo=FALSE}
+data(traitDef, package="PCAN")
+disId <- "612285"
+disName <- traitDef[
+    which(traitDef$id==disId & traitDef$db=="OMIM"),
+    "name"
+]
+```
+
+Here, we pretend that we don't know anything about the
+genetics of the [`r disName`](http://omim.org/entry/`r disId`).
+The symptoms of this syndrome can be formally described by the following
+terms from the
+[Human Phenotype Ontology](http://www.human-phenotype-ontology.org/)
+[@kohler_human_2014]
+(according to this version of the 
+[phenotype_annotation.tab](http://compbio.charite.de/hudson/job/hpo.annotations/1039/artifact/misc/phenotype_annotation.tab)):
+
+```{r, echo=FALSE, results='asis'}
+data(hpByTrait, hpDef, package="PCAN")
+hpOfInterest <- hpByTrait[
+    which(hpByTrait$id==disId & hpByTrait$db=="OMIM"),
+    "hp"
+]
+knitr::kable(
+    hpDef[match(hpOfInterest, hpDef$id),],
+    row.names=FALSE,
+    col.names=c("HP", "Name")
+)
+```
+
+Let's store these phenoytpes in the `hpOfInterest` vector:
+
+`hpOfInterest <- `r paste0('c("', paste(hpOfInterest, collapse='", "'), '")')``
+
+```{r, echo=FALSE}
+data(geneDef, package="PCAN")
+genId <- "57545"
+genSymb <- geneDef[
+    match(genId, geneDef$entrez),
+    "symbol"
+]
+```
+
+The [`r genSymb`](http://www.ncbi.nlm.nih.gov/gene/`r genId`) is known to
+be associated to the [`r disName`](http://omim.org/entry/`r disId`)
+according to [OMIM](http://omim.org). **Let's pretend** in the frame of
+this example that **we don't know this association**
+and that this gene came out from sequencing data related to an individual
+suffering from the *`r disName`*.
+
+***The aim of the following analyses is to assess the relevance of this gene
+for the set of phenotypes under focus.***
+
+## Prior knowledge
+
+To achieve the goal described above, we rely on prior knowledge about
+genetics of disorders and human phenotypes.
+
+### Mendelian disorders and associated genes
+
+Genes known to be associated to  disorders were identified using
+[clinVar](http://www.ncbi.nlm.nih.gov/clinvar/) [@landrum_clinvar:_2014].
+In this package we provide part of this information taken from the
+[ClinVarFullRelease_2015-05.xml.gz](ftp://ftp.ncbi.nlm.nih.gov/pub/clinvar/xml/ClinVarFullRelease_2015-05.xml.gz)
+file.
+
+The `geneByTrait` data frame provides the entrez gene IDs associated to
+disorder. Association were filtered according to the following criteria:
+
+- they all come from OMIM;
+- they all have a **pathogenic** *clinical status*;
+- they all have one of the following *origins*: **germline**, **de novo**,
+**inherited**, **maternal**, **paternal**, **biparental** or **uniparental**.
+
+```{r}
+data(geneByTrait, package="PCAN")
+head(geneByTrait, n=3)
+dim(geneByTrait)
+```
+
+The `traitDef` data frame provides the names of the different disorders:
+
+```{r}
+data(traitDef, package="PCAN")
+head(traitDef, n=3)
+```
+
+The `geneDef` data frame provides basic information about the genes:
+
+```{r}
+data(geneDef, package="PCAN")
+head(geneDef, n=3)
+```
+
+Since **we pretend** that we don't know the association between the
+*`r disName`* (`disId <- "`r disId`"`) and
+*`r genSymb`* (`genId <- "`r genId`"`),
+**let's remove** it from the `geneByTrait` data frame:
+
+```{r}
+geneByTrait <- geneByTrait[
+    which(geneByTrait$id!=disId | geneByTrait$entrez!=genId),
+]
+dim(geneByTrait)
+```
+
+### Human phenotype of mendelian disorders
+
+OMIM disorders were associated to human phenotype using the
+[phenotype_annotation.tab](http://compbio.charite.de/hudson/job/hpo.annotations/1039/artifact/misc/phenotype_annotation.tab) file. The associations are
+available in the `hpByTrait` data frame:
+
+```{r}
+data(hpByTrait, package="PCAN")
+head(hpByTrait, n=3)
+```
+
+Description of the different HP terms were obtained from the
+[hp.obo](http://compbio.charite.de/hudson/job/hpo/1529/artifact/hp/hp.obo) file.
+They are available in the `hpDef` data frame:
+
+```{r}
+data(hpDef, package="PCAN")
+head(hpDef, n=3)
+```
+
+The same
+[hp.obo](http://compbio.charite.de/hudson/job/hpo/1529/artifact/hp/hp.obo) file
+was used to get the descendant HP and the ancestor HP for each HP term. They
+are available in the `hp_descendants` and the `hp_ancestors` lists
+respectively:
+
+```{r}
+data(hp_descendants, hp_ancestors, package="PCAN")
+lapply(head(hp_descendants, n=3), head)
+lapply(head(hp_ancestors, n=3), head)
+```
+
+```{r, echo=FALSE}
+rootHpName <- "Phenotypic abnormality"
+rootHpId <- hpDef$id[which(hpDef$name==rootHpName)]
+```
+
+We only kept information related to the descendants of
+`r rootHpName`
+([`r rootHpId`](http://www.human-phenotype-ontology.org/hpoweb/showterm?id=`r rootHpId`)).
+
+The `geneByHp` data frame, showing gene associated to each HP term, has been
+created from the `geneByTrait` and the `hpByTrait`data frames. This data frame
+is available in the package: `data(geneByHp, package="PCAN")`. However, since
+**we pretend** in the frame of this example that we don't know the association
+between the *`r disName`* and *`r genSymb`*, we need to rebuild the `geneByHp`
+data frame using our filtered `geneByTrait` data frame:
+
+```{r}
+geneByHp <- unique(merge(
+    geneByTrait,
+    hpByTrait,
+    by="id"
+)[,c("entrez", "hp")])
+head(geneByHp, n=3)
+```
+
+### Custom prior knowledge
+
+Several objects representing some biological knowledge are attached to this
+package for the convenience of the user.
+Nevertheless, the package functions could be used with other source of
+knowledge depending on the user needs and the updates of the different
+resources.
+
+In the frame of this project we provide some R scripts
+(available in the `inst/DataPackage-Generator/` folder of the package)
+allowing the generation
+of a package gathering up-to-date information from different databases:
+
+- [clinVar](http://www.ncbi.nlm.nih.gov/clinvar/) [@landrum_clinvar:_2014]
+- [MedGen](http://www.ncbi.nlm.nih.gov/medgen/)
+- [Human-Phenotype-Ontology](http://www.human-phenotype-ontology.org/)
+[@kohler_human_2014]
+- [Orphanet](http://www.orpha.net/) [@rath_representation_2012]
+
+Generating such a package is a way to get up-to-date information from these
+sources. However, some other means could be more convenient for some users.
+That's why this data resource is not tightly coupled with the PCAN package.
+
+# Direct comparison of phenotypes
+
+## Phenotypes associated to the gene candidate
+
+Let's use our prior knowledge to find disorders, and eventually
+human phenotypes, associated to the gene candidate *`r genSymb`*:
+
+```{r}
+genDis <- traitDef[
+    match(
+        geneByTrait[which(geneByTrait$entrez==genId), "id"],
+        traitDef$id
+    ),
+]
+genDis
+
+genHpDef <- hpDef[
+    match(
+        geneByHp[which(geneByHp$entrez==genId), "hp"],
+        hpDef$id
+    ),
+]
+genHp <- genHpDef$id
+dim(genHpDef)
+head(genHpDef)
+```
+
+How many of these `r length(genHp)` HP terms are shared with
+the `r length(hpOfInterest)` HP related to the syndrome under
+focus?
+
+```{r}
+genHpDef[which(genHpDef$id %in% hpOfInterest),]
+```
+
+However some of the `r sum(!genHp %in% hpOfInterest)`
+*`r genSymb`* associated HPs which are not among the
+`r length(hpOfInterest)` HPs of interest present strong similarity
+with the last ones.
+For example the
+*`r hp1 <- "HP:0001305"; hpDef$name[which(hpDef$id==hp1)]`*
+([`r hp1`](http://www.human-phenotype-ontology.org/hpoweb/showterm?id=`r hp1`))
+phenotype, associated to *`r genSymb`*,
+is an indirect but closely related
+[descendant](http://www.human-phenotype-ontology.org/hpoweb/showterm?id=`r hp1`&GETIMAGE=ANCESTORS)
+of
+*`r hp2 <- "HP:0002119"; hpDef$name[which(hpDef$id==hp2)]`*
+([`r hp2`](http://www.human-phenotype-ontology.org/hpoweb/showterm?id=`r hp2`))
+phenotype of interest.
+
+The following steps describe a way to measure similarity between
+different HP terms.
+
+## Information content and semantic similariy
+
+Here we measure semantic similarity between HPs using gene information
+content (IC). The formula below shows how information content
+is computed for each HP term $p$:
+
+$$ IC_{p} = -ln\left(\frac{|p|}{|root|}\right) $$
+
+Where $|p|$ is the number of gene associated to the HP term $p$
+and all its descendants. $root$, in our case, is
+*`r rootHpName`*
+([`r rootHpId`](http://www.human-phenotype-ontology.org/hpoweb/showterm?id=`r rootHpId`)). By definition:
+$IC_{root} = -ln\left(\frac{|root|}{|root|}\right) = 0$.
+
+Let's use the `computeHpIC` function to compute IC for all HP terms
+descendants of *`r rootHpName`* in the human phenotype ontology. This
+function needs to know the genes associated to each HP and the
+descendants of each HP term.
+
+```{r}
+info <- unstack(geneByHp, entrez~hp)
+ic <- computeHpIC(info, hp_descendants)
+```
+
+Let's have a look at the distribution of IC:
+
+```{r, echo=FALSE}
+hist(
+    ic,
+    breaks=100, col="grey",
+    main="Distribution of Information Content",
+    xlab="IC base on genes associated to HP"
+)
+```
+
+IC is an measure of the specificity of genes associated to HPs.
+The higher IC, the more specific.
+
+Semantic similarity ($SS_{p_{1}p_{2}}$) between two HP terms is
+then defined as the
+IC of the most informative common ancestor (MICA) (i.e. showing
+the higher IC).
+
+Let's use the `clacHpSim` function to compute the semantic similarity
+between different couples of HP terms:
+
+```{r}
+hp1 <- "HP:0000518"
+hp2 <- "HP:0030084"
+hpDef[which(hpDef$id %in% c(hp1, hp2)), 1:2]
+calcHpSim(hp1, hp2, IC=ic, ancestors=hp_ancestors)
+```
+
+```{r}
+hp1 <- "HP:0002119"
+hp2 <- "HP:0001305"
+hpDef[which(hpDef$id %in% c(hp1, hp2)), 1:2]
+calcHpSim(hp1, hp2, IC=ic, ancestors=hp_ancestors)
+```
+
+## Comparing two sets of phenotype
+
+Now, we can compute semantic similarity between all
+HP of interest and *`r genSymb`* associated HPs using
+the `compMat` function:
+
+```{r}
+compMat <- compareHPSets(
+    hpSet1=genHp, hpSet2=hpOfInterest,
+    IC=ic,
+    ancestors=hp_ancestors,
+    method="Resnik"
+)
+dim(compMat)
+head(compMat)
+```
+
+Then we compute the symmetric semantic similarity score of the
+matrix to get single value corresponding to similarity
+between the two sets of HP terms: the HP terms of interest
+and *`r genSymb`* associated HPs.
+
+```{r}
+hpSetCompSummary(compMat, method="bma", direction="symSim")
+```
+
+Unfortunately it is not easy to interpret such a score
+and to assess it's significance. To do it we need to
+compare the score of the candidate gene (*`r genSymb`*)
+to the score of all the other genes for which we can compute
+it. Let's compute the score for all the genes:
+
+```{r}
+## Compute semantic similarity between HP of interest and all HP terms
+## This step is time consumming and can be parallelized.
+## Use the BPPARAM parameter to specify your own 
+## back-end with appropriate number of workers.
+hpGeneResnik <- compareHPSets(
+    hpSet1=names(ic), hpSet2=hpOfInterest,
+    IC=ic,
+    ancestors=hp_ancestors,
+    method="Resnik",
+    BPPARAM=bpparam()
+)
+## Group the results by gene
+hpByGene <- unstack(geneByHp, hp~entrez)
+hpMatByGene <- lapply(
+    hpByGene,
+    function(x){
+        hpGeneResnik[x, , drop=FALSE]
+    }
+)
+## Compute the corresponding scores
+resnSss <- unlist(lapply(
+    hpMatByGene,
+    hpSetCompSummary,
+    method="bma", direction="symSim"
+))
+## Get the score of the gene candidate
+candScore <- resnSss[genId]
+candScore
+```
+
+And now, we can compare the score of the candidate to all the others:
+
+```{r}
+candRank <- sum(resnSss >= candScore)
+candRank
+candRelRank <- candRank/length(resnSss)
+candRelRank
+```
+
+```{r, echo=FALSE}
+hist(
+    resnSss,
+    breaks=100, col="grey",
+    ylim=c(0,300),
+    xlab=expression(Sim[sym]),
+    ylab="Number of genes",
+    main=paste(
+        "Distribution of symmetric semantic similarity scores\nfor all the",
+        length(resnSss), "genes"
+    )
+)
+polygon(
+    x=c(candScore, 10, 10, candScore),
+    y=c(-10, -10, 1000, 1000),
+    border="#BE0000",
+    col="#BE000080",
+    lwd=3
+)
+text(
+    x=candScore, y=mean(par()$usr[3:4]),
+    paste0(
+        candRank, " genes (",
+        signif(candRank*100/length(resnSss), 2), "%)\n",
+        "show a symmetric semantic\n",
+        "similarity score greater than\n",
+        "the gene candidate for\n",
+        "for the HPs under focus."
+    ),
+    pos=4,
+    cex=0.6
+)
+```
+
+**According to a direct comparison, the candidate gene *`r genSymb`*
+is in the top `r signif(candRelRank*100,2)`% genes the most relevant
+for the set of HPs of interest. This result can be used for candidate
+prioritization.**
+
+# The pathway consensus approach
+
+Often, gene candidates are not known yet to be associated to any
+genetic disorders. In such cases the prior knowledge can not be
+used to associate HP terms to the gene and the direct comparison
+of HP sets is not possible. In such situation we can focus genes
+known to interact with the gene of interest or known to be involved
+in the same biological processes and compute a consensus score
+taking all of them into account. This *pathway consensus* approach
+can also be used in addition to the direct comparison to provide
+further confidence or insight into the relationship between the
+gene candidate and the syndrome under focus.
+
+## Additional prior knowledge
+
+To be able to apply such an approach we obviously need some information
+about gene pathways or gene network. For the convenience of the user
+we provide such an information within the package. However the user can
+use any kind of resource depending on the needs.
+
+Gene belonging to Reactome [@croft_reactome_2014] pathways are provided in the
+`hsEntrezByRPath` object. The name of the pathway can be found
+in the `rPath` data frame.
+
+```{r}
+data(hsEntrezByRPath, rPath, package="PCAN")
+head(rPath, n=3)
+lapply(head(hsEntrezByRPath, 3), head)
+```
+
+The STRING database [@jensen_string_2009] was used to get gene interactions.
+This information, focused on Homo sapiens genes and on interaction
+with a score higher than 500, can be found in the `hqStrNw` data frame:
+
+```{r}
+data(hqStrNw, package="PCAN")
+head(hqStrNw, n=3)
+```
+
+## Genes belonging to the pathways of the candidate
+
+Here we are going to assess the relevance of genes involved in the
+same pathways as *`r genSymb`* for the HP terms of interest.
+
+First, let's identify the pathways in which *`r genSymb`* is involved:
+
+```{r}
+candPath <- names(hsEntrezByRPath)[which(unlist(lapply(
+    hsEntrezByRPath,
+    function(x) genId %in% x
+)))]
+rPath[which(rPath$Pathway %in% candPath),]
+```
+
+Then we can retrieve the symmetric semantic similarity scores for all these
+genes when the information is available. Let's use the `hpGeneListComp`
+function:
+
+```{r}
+rPathRes <- hpGeneListComp(
+    geneList=hsEntrezByRPath[[candPath]],
+    ssMatByGene = hpMatByGene,
+    geneSSScore = resnSss
+)
+```
+
+This function returns a list with many information. Have a look at
+`?hpGeneListComp` to get a complete description of this output.
+Among the `scores` element of this output provides the scores for the
+genes in the submitted list:
+
+```{r}
+length(rPathRes$scores)
+sum(!is.na(rPathRes$scores))
+```
+
+Among the `r length(rPathRes$scores)` genes belonging to the same
+pathway as *`r genSymb`*, a score could be computed for only
+`r sum(!is.na(rPathRes$scores))` of them.
+
+The `p.value` element of the output  provides the p-value returned
+by `wilcox.test` comparing these scores to the scores of all the
+genes not in the provided list.
+
+```{r, echo=FALSE}
+hist(
+    resnSss,
+    breaks=100, col="grey",
+    ylim=c(0,5),
+    xlab=expression(Sim[sym]),
+    ylab="Density",
+    main=paste(
+        "Distribution of symmetric semantic similarity scores\nfor all the",
+        length(resnSss), "genes"
+    ),
+    probability=TRUE
+)
+toAdd <- hist(
+    rPathRes$scores,
+    breaks=100,
+    plot=FALSE
+)
+for(i in 1:length(toAdd$density)){
+    polygon(
+        x=toAdd$breaks[c(i, i+1, i+1, i)],
+        y=c(0, 0, rep(toAdd$density[i], 2)),
+        col="#BE000040",
+        border="#800000FF"
+    )
+}
+legend(
+    "topright",
+    paste0(
+        "Genes belonging to the ", candPath," pathway:\n'",
+        rPath[which(rPath$Pathway %in% candPath),"Pathway_name"],
+        "'\nand with a symmetric semantic similarity score (",
+        sum(!is.na(rPathRes$scores)),
+        "/",
+        length(rPathRes$scores),
+        ")\n",
+        "p-value: ", signif(rPathRes$p.value, 2)
+    ),
+    pch=15,
+    col="#BE000040",
+    bty="n",
+    cex=0.6
+)
+```
+
+**This result show that in general the genes belonging to the
+*`r rPath$Pathway_name[which(rPath$Pathway %in% candPath)]`* pathway
+in which *`r genSymb`* is involved are relevant
+for the set of phenotype of interest.**
+
+To get further insight we can explore the score of all
+the genes belonging to this pathway:
+
+
+```{r}
+pathSss <- rPathRes$scores[which(!is.na(rPathRes$scores))]
+names(pathSss) <- geneDef[match(names(pathSss), geneDef$entrez), "symbol"]
+par(mar=c(7.1, 4.1, 4.1, 2.1))
+barplot(
+    sort(pathSss),
+    las=2,
+    ylab=expression(Sim[sym]),
+    main=rPath[which(rPath$Pathway %in% candPath),"Pathway_name"]
+)
+p <- c(0.25, 0.5, 0.75, 0.95)
+abline(
+    h=quantile(resnSss, probs=p),
+    col="#BE0000",
+    lty=c(2, 1, 2, 2),
+    lwd=c(2, 2, 2, 1)
+)
+text(
+    rep(0,4),
+    quantile(resnSss, probs=p),
+    p,
+    pos=3,
+    offset=0,
+    col="#BE0000",
+    cex=0.6
+)
+legend(
+    "topleft",
+    paste0(
+        "Quantiles of the distribution of symmetric semantic similarity\n",
+        "scores for all the genes."
+    ),
+    lty=1,
+    col="#BE0000",
+    cex=0.6
+)
+```
+
+Finally the `hpGeneHeatmap` function can be used to explore which
+HP term of interest are best matched to each of the genes under
+focus:
+
+```{r}
+geneLabels <- geneDef$symbol[which(!duplicated(geneDef$entrez))]
+names(geneLabels) <- geneDef$entrez[which(!duplicated(geneDef$entrez))]
+hpLabels <- hpDef$name
+names(hpLabels) <- hpDef$id
+hpGeneHeatmap(
+    rPathRes,
+    genesOfInterest=genId,
+    geneLabels=geneLabels,
+    hpLabels=hpLabels,
+    clustByGene=TRUE,
+    clustByHp=TRUE,
+    palFun=colorRampPalette(c("white", "red")),
+    goiCol="blue",
+    main=rPath[which(rPath$Pathway %in% candPath),"Pathway_name"]
+)
+```
+
+
+## Genes interacting with the candidate
+
+The same kind of analysis can be done with genes direct neighbors
+of *`r genSymb`* in the STRING database network:
+
+```{r}
+neighbors <- unique(c(
+    hqStrNw$gene1[which(hqStrNw$gene2==genId)],
+    hqStrNw$gene2[which(hqStrNw$gene1==genId)],
+    genId
+))
+neighRes <- hpGeneListComp(
+    geneList=neighbors,
+    ssMatByGene = hpMatByGene,
+    geneSSScore = resnSss
+)
+```
+
+```{r, echo=FALSE}
+hist(
+    resnSss,
+    breaks=100, col="grey",
+    ylim=c(0,10),
+    xlab=expression(Sim[sym]),
+    ylab="Density",
+    main=paste(
+        "Distribution of symmetric semantic similarity scores\nfor all the",
+        length(resnSss), "genes"
+    ),
+    probability=TRUE
+)
+toAdd <- hist(
+    neighRes$scores,
+    breaks=100,
+    plot=FALSE
+)
+for(i in 1:length(toAdd$density)){
+    polygon(
+        x=toAdd$breaks[c(i, i+1, i+1, i)],
+        y=c(0, 0, rep(toAdd$density[i], 2)),
+        col="#BE000040",
+        border="#800000FF"
+    )
+}
+legend(
+    "topright",
+    paste0(
+        "Genes interacting with ",
+        geneDef[which(geneDef$entrez==genId),"symbol"],
+        " (", genId, ")",
+        "\nand with a symmetric semantic similarity score (",
+        sum(!is.na(neighRes$scores)),
+        "/",
+        length(neighRes$scores),
+        ")\n",
+        "p-value: ", signif(neighRes$p.value, 2)
+    ),
+    pch=15,
+    col="#BE000040",
+    bty="n",
+    cex=0.6
+)
+```
+
+```{r, echo=FALSE}
+neighSss <- neighRes$scores[which(!is.na(neighRes$scores))]
+names(neighSss) <- geneDef[match(names(neighSss), geneDef$entrez), "symbol"]
+opar <- par(mar=c(7.1, 4.1, 4.1, 2.1))
+barplot(
+    sort(neighSss),
+    las=2,
+    ylab=expression(Sim[sym]),
+    main=paste0(
+        "Genes interacting with ",
+        geneDef[which(geneDef$entrez==genId),"symbol"],
+        " (", genId, ")"
+    )
+)
+p <- c(0.25, 0.5, 0.75, 0.95)
+abline(
+    h=quantile(resnSss, probs=p),
+    col="#BE0000",
+    lty=c(2, 1, 2, 2),
+    lwd=c(2, 2, 2, 1)
+)
+text(
+    rep(0,4),
+    quantile(resnSss, probs=p),
+    p,
+    pos=3,
+    offset=0,
+    col="#BE0000",
+    cex=0.6
+)
+legend(
+    "topleft",
+    paste0(
+        "Quantiles of the distribution of symmetric semantic similarity\n",
+        "scores for all the genes."
+    ),
+    lty=1,
+    col="#BE0000",
+    cex=0.6
+)
+```
+
+```{r, echo=FALSE}
+hpGeneHeatmap(
+    neighRes,
+    genesOfInterest=genId,
+    geneLabels=geneLabels,
+    hpLabels=hpLabels,
+    clustByGene=TRUE,
+    clustByHp=TRUE,
+    palFun=colorRampPalette(c("white", "red")),
+    goiCol="blue",
+    main=rPath[which(rPath$Pathway %in% candPath),"Pathway_name"]
+)
+```
+
+# Session info
+
+```{r, echo=FALSE}
+sessionInfo()
+```
+
+# References
+
+<!-- Bibliography -->
