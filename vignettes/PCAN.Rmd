@@ -345,7 +345,8 @@ compMat <- compareHPSets(
     hpSet1=genHp, hpSet2=hpOfInterest,
     IC=ic,
     ancestors=hp_ancestors,
-    method="Resnik"
+    method="Resnik",
+    BPPARAM=SerialParam()
 )
 dim(compMat)
 head(compMat)
@@ -376,7 +377,7 @@ hpGeneResnik <- compareHPSets(
     IC=ic,
     ancestors=hp_ancestors,
     method="Resnik",
-    BPPARAM=bpparam()
+    BPPARAM=SerialParam()
 )
 ## Group the results by gene
 hpByGene <- unstack(geneByHp, hp~entrez)

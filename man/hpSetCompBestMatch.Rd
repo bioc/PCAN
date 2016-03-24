@@ -46,7 +46,8 @@ compMat <- compareHPSets(
     hpSet1=geneHps, hpSet2=hpOfInterest,
     IC=ic,
     ancestors=hp_ancestors,
-    method="Resnik"
+    method="Resnik",
+    BPPARAM=SerialParam()
 )
 ## Get the symmetric semantic similarity score
 hpSetCompSummary(compMat, method="bma", direction="symSim")
