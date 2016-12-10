@@ -1,0 +1,17 @@
+citEntry(entry = "Article",
+  title        = "PCAN: phenotype consensus analysis to support disease-gene association",
+  author       = personList(as.person("Patrice Godard"),
+                   as.person("Matthew Page")),
+  journal      = "BMC Bioinformatics",
+  year         = 2016,
+  volume       = 17,
+  number       = 1,
+  pages        = 518,
+  doi          = "10.1186/s12859-016-1401-2",
+  url          = "https://bmcbioinformatics.biomedcentral.com/articles/10.1186/s12859-016-1401-2",
+
+  textVersion  =
+  paste("Patrice Godard and Matthew Page (2016).",
+        "PCAN: phenotype consensus analysis to support disease-gene association.",
+        "BMC Bioinformatics, 17(1), 518.")
+)
